@@ -41,6 +41,14 @@ class ResearchRequest(BaseModel):
     provider: Optional[ProviderConfig] = None
 
 
+BLOCKED_DOMAINS = [
+    "openai.com", "twitter.com", "x.com", "facebook.com",
+    "instagram.com", "linkedin.com", "reddit.com", "tiktok.com"
+]
+
+def is_crawlable(url: str) -> bool:
+    return not any(domain in url for domain in BLOCKED_DOMAINS)
+
 def detect_provider_id(base_url: str) -> str:
     if not base_url:
         return "groq"
@@ -147,8 +155,9 @@ def perform_research(request_data: ResearchRequest):
                 ]
                 vane_succeeded = True
 
-                # Deep-crawl top 2 source URLs via crawl4ai
-                for source in sources[:2]:
+                # Deep-crawl top crawlable source URLs via crawl4ai
+                crawl_candidates = [s for s in sources if is_crawlable(s.get("metadata", {}).get("url", ""))]
+                for source in crawl_candidates[:3]:
                     url   = source.get("metadata", {}).get("url", "")
                     title = source.get("metadata", {}).get("title", "Untitled")
                     if not url:
@@ -188,7 +197,8 @@ def perform_research(request_data: ResearchRequest):
                            "url":     r.get("url", ""),
                            "content": r.get("content", "")} for r in results]
 
-        for item in results[:2]:
+        crawlable_results = [r for r in results if is_crawlable(r.get("url", ""))]
+        for item in crawlable_results[:3]:
             url   = item.get("url", "")
             title = item.get("title", "Untitled")
             if not url:
