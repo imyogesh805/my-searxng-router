@@ -57,7 +57,7 @@ def detect_provider_id(base_url: str) -> str:
         return "groq"
     if "groq.com" in base_url:
         return "groq"
-    if "openai.com" in base_url:
+    if "openai.com" in base_url or "openrouter.ai" in base_url:
         return "openai"
     if "anthropic.com" in base_url:
         return "anthropic"
