@@ -5,6 +5,7 @@ Purpose: FastAPI Web App & Gateway — unified search + streaming AI answer engi
 
 import os
 import json
+import time
 import requests
 from typing import Optional, Iterator
 from fastapi import FastAPI
@@ -200,6 +201,42 @@ def stream_research(query: str, use_ai: bool, dev_focus: bool,
     except Exception as e:
         yield sse("step", {"text": f"⚠️ LLM error: {str(e)[:80]}", "phase": "error"})
         yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": crawled_pages})
+
+
+class PingRequest(BaseModel):
+    base_url: str
+    api_key: str
+    model: str
+
+
+@app.post("/api/ping")
+def ping_provider(req: PingRequest):
+    """Ping an LLM provider with a tiny request and return response time."""
+    try:
+        start = time.time()
+        response = requests.post(
+            f"{req.base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {req.api_key}", "Content-Type": "application/json"},
+            json={
+                "model": req.model,
+                "messages": [{"role": "user", "content": "Reply with one word: ready"}],
+                "max_tokens": 5,
+                "temperature": 0
+            },
+            timeout=15
+        )
+        elapsed = round((time.time() - start) * 1000)
+
+        if response.status_code == 200:
+            reply = response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            return {"ok": True, "ms": elapsed, "reply": reply, "model": req.model}
+        else:
+            return {"ok": False, "ms": elapsed, "error": f"HTTP {response.status_code}: {response.text[:120]}"}
+
+    except requests.exceptions.Timeout:
+        return {"ok": False, "ms": 15000, "error": "Request timed out (>15s)"}
+    except Exception as e:
+        return {"ok": False, "ms": 0, "error": str(e)[:120]}
 
 
 @app.post("/api/research/stream")

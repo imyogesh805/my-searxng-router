@@ -45,9 +45,57 @@ document.addEventListener('DOMContentLoaded', () => {
         hide(settingsModal);
     }
 
+    const testProviderBtn = document.getElementById('testProviderBtn');
+    const pingResult      = document.getElementById('pingResult');
+
     settingsBtn.addEventListener('click', () => { loadSettings(); show(settingsModal); });
     closeSettingsBtn.addEventListener('click', () => hide(settingsModal));
     saveSettingsBtn.addEventListener('click', saveSettings);
+
+    testProviderBtn.addEventListener('click', async () => {
+        const base_url = providerUrlInput.value.trim()   || 'https://api.groq.com/openai/v1';
+        const api_key  = providerKeyInput.value.trim();
+        const model    = providerModelInput.value.trim() || 'llama3-8b-8192';
+
+        if (!api_key) {
+            pingResult.className = 'ping-result ping-error';
+            pingResult.textContent = '⚠️ Enter an API key first.';
+            show(pingResult);
+            return;
+        }
+
+        testProviderBtn.disabled = true;
+        testProviderBtn.innerHTML = '<span class="step-spinner"></span> Testing...';
+        pingResult.className = 'ping-result';
+        pingResult.textContent = '';
+        hide(pingResult);
+
+        try {
+            const res = await fetch('/api/ping', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ base_url, api_key, model })
+            });
+            const data = await res.json();
+
+            if (data.ok) {
+                const speed = data.ms < 800 ? '🟢 Fast' : data.ms < 2000 ? '🟡 Medium' : '🔴 Slow';
+                pingResult.className = 'ping-result ping-success';
+                pingResult.textContent = `${speed} — ${data.ms}ms — Model: ${data.model} — Reply: "${data.reply}"`;
+            } else {
+                pingResult.className = 'ping-result ping-error';
+                pingResult.textContent = `❌ Failed: ${data.error}`;
+            }
+            show(pingResult);
+        } catch (e) {
+            pingResult.className = 'ping-result ping-error';
+            pingResult.textContent = `❌ Network error: ${e.message}`;
+            show(pingResult);
+        } finally {
+            testProviderBtn.disabled = false;
+            testProviderBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Test Connection';
+        }
+    });
     window.addEventListener('click', e => {
         if (e.target === settingsModal) hide(settingsModal);
         if (e.target === crawlModal)    hide(crawlModal);
