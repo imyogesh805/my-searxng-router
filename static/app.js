@@ -30,6 +30,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentCrawledPages = [];
     let activeReader = null;
+    let fullMarkdownBuffer = '';
+
+    // Configure marked for safe rendering
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({ breaks: true, gfm: true });
+    }
+
+    function renderMarkdown(text) {
+        if (typeof marked !== 'undefined') {
+            return marked.parse(text);
+        }
+        // Fallback: basic escaping
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
 
     // ── Settings ──────────────────────────────────────────────────────────────
     function loadSettings() {
@@ -45,8 +59,12 @@ document.addEventListener('DOMContentLoaded', () => {
         hide(settingsModal);
     }
 
-    const testProviderBtn = document.getElementById('testProviderBtn');
-    const pingResult      = document.getElementById('pingResult');
+    const testProviderBtn   = document.getElementById('testProviderBtn');
+    const pingResult        = document.getElementById('pingResult');
+    const fetchModelsBtn    = document.getElementById('fetchModelsBtn');
+    const modelsLoadingText = document.getElementById('modelsLoadingText');
+    const modelsError       = document.getElementById('modelsError');
+    const modelsList        = document.getElementById('modelsList');
 
     settingsBtn.addEventListener('click', () => { loadSettings(); show(settingsModal); });
     closeSettingsBtn.addEventListener('click', () => hide(settingsModal));
@@ -109,6 +127,72 @@ document.addEventListener('DOMContentLoaded', () => {
     searchInput.addEventListener('input', function () {
         this.style.height = 'auto';
         this.style.height = this.scrollHeight + 'px';
+    });
+
+    // ── Fetch Vane models ─────────────────────────────────────────────────────
+    fetchModelsBtn.addEventListener('click', async () => {
+        fetchModelsBtn.disabled = true;
+        fetchModelsBtn.innerHTML = '<span class="step-spinner"></span>';
+        hide(modelsError);
+        hide(modelsList);
+        show(modelsLoadingText);
+
+        try {
+            const res  = await fetch('/api/vane/providers');
+            const data = await res.json();
+
+            if (data.error) {
+                modelsError.textContent = `⚠️ ${data.error}`;
+                show(modelsError);
+                hide(modelsLoadingText);
+                return;
+            }
+
+            const providers = data.providers || [];
+            const allModels = [];
+
+            providers.forEach(provider => {
+                (provider.chatModels || []).forEach(model => {
+                    allModels.push({
+                        label: `${provider.name} — ${model.name}`,
+                        key:   model.key
+                    });
+                });
+            });
+
+            hide(modelsLoadingText);
+
+            if (allModels.length === 0) {
+                modelsError.textContent = '⚠️ No chat models found. Check Vane provider config.';
+                show(modelsError);
+                return;
+            }
+
+            modelsList.innerHTML = '';
+            allModels.forEach(m => {
+                const chip = document.createElement('button');
+                chip.className = 'model-chip';
+                chip.textContent = m.label;
+                chip.dataset.key = m.key;
+                if (m.key === providerModelInput.value) chip.classList.add('selected');
+                chip.addEventListener('click', () => {
+                    providerModelInput.value = m.key;
+                    modelsList.querySelectorAll('.model-chip').forEach(c => c.classList.remove('selected'));
+                    chip.classList.add('selected');
+                });
+                modelsList.appendChild(chip);
+            });
+
+            show(modelsList);
+
+        } catch (e) {
+            modelsError.textContent = `⚠️ Network error: ${e.message}`;
+            show(modelsError);
+            hide(modelsLoadingText);
+        } finally {
+            fetchModelsBtn.disabled = false;
+            fetchModelsBtn.innerHTML = '<i class="fa-solid fa-rotate"></i> Fetch';
+        }
     });
 
     // ── Pipeline step indicator ───────────────────────────────────────────────
@@ -218,7 +302,8 @@ document.addEventListener('DOMContentLoaded', () => {
         hide(sourcesCard);
         pipelineSteps.innerHTML = '';
         hide(pipelineSteps);
-        aiResponseContent.textContent = '';
+        aiResponseContent.innerHTML = '';
+        fullMarkdownBuffer = '';
         sourcesList.innerHTML = '';
         currentCrawledPages = [];
         streamingDot.classList.remove('hidden');
@@ -308,11 +393,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         case 'token':
                             show(aiSummaryCard);
                             show(resultsSection);
-                            aiResponseContent.textContent += data.text;
+                            fullMarkdownBuffer += data.text;
+                            aiResponseContent.innerHTML = renderMarkdown(fullMarkdownBuffer);
                             aiResponseContent.scrollTop = aiResponseContent.scrollHeight;
                             break;
 
                         case 'done':
+                            // Final render pass — ensures clean markdown
+                            if (fullMarkdownBuffer) {
+                                aiResponseContent.innerHTML = renderMarkdown(fullMarkdownBuffer);
+                            }
                             finishSteps();
                             streamingDot.classList.add('hidden');
                             submitBtn.disabled = false;

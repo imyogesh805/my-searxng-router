@@ -100,6 +100,17 @@
                     <label for="providerModel">Model ID</label>
                     <input type="text" id="providerModel" placeholder="llama3-8b-8192">
                 </div>
+                <div class="input-group">
+                    <div class="model-picker-header">
+                        <label>Pick from Vane Models</label>
+                        <button id="fetchModelsBtn" class="fetch-btn">
+                            <i class="fa-solid fa-rotate"></i> Fetch
+                        </button>
+                    </div>
+                    <div id="modelsLoadingText" class="models-hint hidden">Fetching models from Vane...</div>
+                    <div id="modelsError" class="models-hint models-error hidden"></div>
+                    <div id="modelsList" class="models-list hidden"></div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button id="testProviderBtn" class="secondary-btn">
@@ -124,6 +135,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

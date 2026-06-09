@@ -15,8 +15,8 @@ from pydantic import BaseModel
 
 app = FastAPI(
     title="Aether Search - Unified Research Gateway",
-    version="3.0.0",
-    description="Unified API and Web UI combining SearXNG, Vane, and Crawl4AI with SSE streaming.",
+    version="3.1.0",
+    description="Unified API and Web UI combining SearXNG, crawl4ai, and streaming LLM synthesis.",
 )
 
 # Service URLs
@@ -201,6 +201,18 @@ def stream_research(query: str, use_ai: bool, dev_focus: bool,
     except Exception as e:
         yield sse("step", {"text": f"⚠️ LLM error: {str(e)[:80]}", "phase": "error"})
         yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": crawled_pages})
+
+
+@app.get("/api/vane/providers")
+def get_vane_providers():
+    """Proxy Vane's /api/providers endpoint to avoid CORS issues."""
+    try:
+        r = requests.get(f"{HF_VANE_URL.rstrip('/')}/api/providers", timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        return {"providers": [], "error": f"Vane returned {r.status_code}"}
+    except Exception as e:
+        return {"providers": [], "error": str(e)[:120]}
 
 
 class PingRequest(BaseModel):
