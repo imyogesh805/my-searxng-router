@@ -19,7 +19,7 @@ app = FastAPI(
 )
 
 # Load global environment fallbacks
-RENDER_SEARXNG_URL = os.environ.get("RENDER_SEARXNG_URL", "https://my-searxng-router.onrender.com/search")
+RENDER_SEARXNG_URL = os.environ.get("RENDER_SEARXNG_URL", "https://p02--vane-imy--vkwp6sfj4t5z.code.run/search")
 HF_CRAWL4AI_URL    = os.environ.get("HF_CRAWL4AI_URL", "https://imy805-crawl4ai.hf.space/extract")
 
 # Model configurations
@@ -54,9 +54,6 @@ def perform_research(request_data: ResearchRequest):
     if dev_focus:
         search_params["categories"] = "it"
         search_params["engines"] = "github,stackoverflow"
-    else:
-        # Default to bing since Google/DuckDuckGo are currently showing captcha/timeouts on this SearXNG instance
-        search_params["engines"] = "bing"
         
     try:
         search_response = requests.get(RENDER_SEARXNG_URL, params=search_params, timeout=15)

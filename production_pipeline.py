@@ -10,7 +10,7 @@ import requests
 import os
 
 # Live System Environment Variables (loads from environment with hardcoded fallback defaults)
-RENDER_SEARXNG_URL = os.environ.get("RENDER_SEARXNG_URL", "https://my-searxng-router.onrender.com/search")
+RENDER_SEARXNG_URL = os.environ.get("RENDER_SEARXNG_URL", "https://p02--vane-imy--vkwp6sfj4t5z.code.run/search")
 HF_CRAWL4AI_URL    = os.environ.get("HF_CRAWL4AI_URL", "https://imy805-crawl4ai.hf.space/extract")
 NORTHFLANK_VANE_URL = os.environ.get("NORTHFLANK_VANE_URL", "https://your-vane-app.northflank.app/api/search")
 
