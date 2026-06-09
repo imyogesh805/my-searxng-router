@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             // Update progress message
             if (useAi) {
-                statusText.textContent = "Crawling targets & synthesizing AI summary...";
+                statusText.textContent = "Querying Vane answer engine...";
             } else {
                 statusText.textContent = "Searching web targets and extracting page layouts...";
             }
