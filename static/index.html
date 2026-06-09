@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aether Search - Unified AI Research Engine</title>
+    <!-- Modern Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome icons for clean UI elements -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="index.css">
+</head>
+<body class="dark-mode">
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand">
+                <i class="fa-solid fa-wand-magic-sparkles logo-icon"></i>
+                <h1>Aether<span>Search</span></h1>
+            </div>
+            <button id="settingsBtn" class="icon-btn" title="AI Configuration">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+        </header>
+
+        <!-- Main Search Form -->
+        <main class="search-section">
+            <div class="search-container-wrapper">
+                <div class="search-box-container">
+                    <textarea id="searchInput" placeholder="Ask anything, or paste news keywords..." rows="1"></textarea>
+                    <button id="submitBtn" class="search-btn">
+                        <i class="fa-solid fa-arrow-up"></i>
+                    </button>
+                </div>
+                
+                <!-- Controls and Toggles -->
+                <div class="search-controls">
+                    <div class="control-group">
+                        <span class="control-label">AI Search</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="aiToggle" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div class="control-group">
+                        <span class="control-label">Dev Focus</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="devToggle">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Status & Progress Indicators -->
+        <div id="statusIndicator" class="status-container hidden">
+            <div class="spinner"></div>
+            <span id="statusText">Preparing query...</span>
+        </div>
+
+        <!-- Results Display Panel -->
+        <section id="resultsSection" class="results-container hidden">
+            <!-- Left Side: Synthesized AI Summary -->
+            <div id="aiSummaryCard" class="result-card ai-summary-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-brain header-icon"></i>
+                    <h2>Research Summary</h2>
+                </div>
+                <div id="aiResponseContent" class="card-body markdown-body">
+                    <!-- AI response goes here -->
+                </div>
+            </div>
+
+            <!-- Right Side: Sources and Scraped Crawl Data -->
+            <div class="result-card sources-card">
+                <div class="card-header">
+                    <i class="fa-solid fa-globe header-icon"></i>
+                    <h2>Sources & Crawled Pages</h2>
+                </div>
+                <div id="sourcesList" class="card-body sources-list">
+                    <!-- Source list items and crawl buttons go here -->
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Settings Configuration Modal -->
+    <div id="settingsModal" class="modal-overlay hidden">
+        <div class="modal-content glass-card">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-robot"></i> AI Engine Configuration</h2>
+                <button id="closeSettingsBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-desc">Configure your preferred LLM provider details. These settings are stored locally in your browser.</p>
+                
+                <div class="input-group">
+                    <label for="providerUrl">API Base URL</label>
+                    <input type="text" id="providerUrl" placeholder="https://api.groq.com/openai/v1">
+                </div>
+
+                <div class="input-group">
+                    <label for="providerKey">API Key</label>
+                    <input type="password" id="providerKey" placeholder="Enter your provider API Key">
+                </div>
+
+                <div class="input-group">
+                    <label for="providerModel">Model ID</label>
+                    <input type="text" id="providerModel" placeholder="llama3-8b-8192">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="saveSettingsBtn" class="primary-btn">Save Configuration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crawl Viewer Modal (for inspecting full Markdown details of crawled pages) -->
+    <div id="crawlModal" class="modal-overlay hidden">
+        <div class="modal-content crawl-modal-content glass-card">
+            <div class="modal-header">
+                <h2 id="crawlModalTitle">Raw Crawled Document</h2>
+                <button id="closeCrawlBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre class="crawl-pre"><code id="crawlModalContent" class="language-markdown"></code></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
