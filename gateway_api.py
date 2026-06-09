@@ -109,98 +109,183 @@ def stream_research(query: str, use_ai: bool, dev_focus: bool,
         yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": []})
         return
 
-    # ── STEP 2: Crawl top pages ───────────────────────────────────────────────
+    # ── STEP 2: Route through Vane (AI answer engine) ────────────────────────
+    yield sse("step", {"text": "🧠 Asking Vane answer engine...", "phase": "generate"})
+
+    provider_id = detect_provider_id(llm_url)
+    vane_payload = {
+        "chatModel": {
+            "provider": provider_id,
+            "name":     llm_model
+        },
+        "embeddingModel": {
+            "provider": "transformers",
+            "name":     "all-MiniLM-L6-v2"
+        },
+        "focusMode":        "webSearch",
+        "optimizationMode": "balanced",
+        "query":            query,
+        "stream":           True
+    }
+
+    vane_headers = {"Content-Type": "application/json"}
+    if llm_key:
+        vane_headers["x-openai-api-key"] = llm_key
+
+    vane_ok      = False
+    full_summary = ""
     crawled_pages = []
-    crawlable = [r for r in results if is_crawlable(r.get("url", ""))]
-
-    for item in crawlable[:3]:
-        url   = item.get("url", "")
-        title = item.get("title", "Untitled")
-        if not url:
-            continue
-        try:
-            domain = url.split("/")[2]
-            yield sse("step", {"text": f"🕷️ Crawling {domain}...", "phase": "crawl"})
-            crawl_r = requests.post(HF_CRAWL4AI_URL, json={"url": url}, timeout=30)
-            if crawl_r.status_code == 200:
-                markdown = crawl_r.json().get("markdown", "")
-                if markdown:
-                    page = {"title": title, "url": url, "markdown": markdown}
-                    crawled_pages.append(page)
-                    yield sse("crawled", {"page": page})
-        except Exception:
-            continue
-
-    if not llm_key:
-        yield sse("step", {"text": "⚠️ No API key configured. Set it in Settings.", "phase": "error"})
-        yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": crawled_pages})
-        return
-
-    # ── STEP 3: Stream LLM answer ─────────────────────────────────────────────
-    yield sse("step", {"text": "🧠 Generating answer...", "phase": "generate"})
-
-    if crawled_pages:
-        context_str = ""
-        for idx, page in enumerate(crawled_pages, 1):
-            context_str += f"\nSource #{idx}: {page['title']} ({page['url']})\n"
-            context_str += f"---\n{page['markdown'][:4000]}\n---\n"
-    else:
-        # Fall back to search snippets if no pages were crawled
-        context_str = "\n".join(
-            f"Source #{i+1}: {r['title']} ({r['url']})\n{r['content']}"
-            for i, r in enumerate(search_results[:5])
-        )
-
-    prompt = (
-        f"You are a professional research assistant. Write a comprehensive, well-structured "
-        f"Markdown research report answering: \"{query}\".\n\n"
-        f"Use these sources:\n{context_str}\n\n"
-        f"Format in clean Markdown with headers. Cite sources as [1], [2] etc."
-    )
 
     try:
-        llm_response = requests.post(
-            f"{llm_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
-            json={
-                "model": llm_model,
-                "messages": [
-                    {"role": "system", "content": "You are a precise researcher. Write factual reports based strictly on the provided sources."},
-                    {"role": "user",   "content": prompt}
-                ],
-                "temperature": 0.2,
-                "stream": True
-            },
+        vane_r = requests.post(
+            f"{HF_VANE_URL.rstrip('/')}/api/chat",
+            headers=vane_headers,
+            json=vane_payload,
             stream=True,
-            timeout=60
+            timeout=90
         )
 
-        full_summary = ""
-        for line in llm_response.iter_lines():
-            if not line:
-                continue
-            line = line.decode("utf-8") if isinstance(line, bytes) else line
-            if line.startswith("data: "):
-                chunk = line[6:]
-                if chunk.strip() == "[DONE]":
-                    break
+        if vane_r.status_code == 200:
+            vane_ok = True
+            for raw_line in vane_r.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+
+                # Vane streams JSON objects one per line
                 try:
-                    token = json.loads(chunk)["choices"][0]["delta"].get("content", "")
+                    obj = json.loads(line)
+                except Exception:
+                    # Try SSE data: prefix
+                    if line.startswith("data: "):
+                        try:
+                            obj = json.loads(line[6:])
+                        except Exception:
+                            continue
+                    else:
+                        continue
+
+                msg_type = obj.get("type", "")
+
+                if msg_type == "sources":
+                    # Vane sends sources mid-stream — update sources panel
+                    vane_sources = obj.get("data", [])
+                    for src in vane_sources:
+                        meta = src.get("metadata", {})
+                        url   = meta.get("url", "")
+                        title = meta.get("title", url)
+                        # crawl the source pages too
+                        if url and is_crawlable(url):
+                            try:
+                                domain = url.split("/")[2]
+                                yield sse("step", {"text": f"🕷️ Crawling {domain}...", "phase": "crawl"})
+                                crawl_r = requests.post(HF_CRAWL4AI_URL, json={"url": url}, timeout=30)
+                                if crawl_r.status_code == 200:
+                                    markdown = crawl_r.json().get("markdown", "")
+                                    if markdown:
+                                        page = {"title": title, "url": url, "markdown": markdown}
+                                        crawled_pages.append(page)
+                                        yield sse("crawled", {"page": page})
+                            except Exception:
+                                pass
+
+                elif msg_type == "message":
+                    token = obj.get("data", "")
                     if token:
                         full_summary += token
                         yield sse("token", {"text": token})
-                except Exception:
-                    continue
 
-        yield sse("done", {
-            "summary": full_summary,
-            "search_results": search_results,
-            "crawled_pages": crawled_pages
-        })
+                elif msg_type == "messageEnd":
+                    break
+
+        else:
+            err_text = vane_r.text[:200]
+            yield sse("step", {"text": f"⚠️ Vane error {vane_r.status_code}: {err_text}", "phase": "error"})
 
     except Exception as e:
-        yield sse("step", {"text": f"⚠️ LLM error: {str(e)[:80]}", "phase": "error"})
-        yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": crawled_pages})
+        yield sse("step", {"text": f"⚠️ Vane unreachable: {str(e)[:80]}", "phase": "error"})
+
+    # ── Fallback: direct LLM if Vane failed ──────────────────────────────────
+    if not vane_ok and llm_key:
+        yield sse("step", {"text": "⚡ Falling back to direct LLM...", "phase": "generate"})
+
+        # Crawl top pages for context
+        crawlable = [r for r in results if is_crawlable(r.get("url", ""))]
+        for item in crawlable[:3]:
+            url   = item.get("url", "")
+            title = item.get("title", "Untitled")
+            if not url:
+                continue
+            try:
+                domain = url.split("/")[2]
+                yield sse("step", {"text": f"🕷️ Crawling {domain}...", "phase": "crawl"})
+                crawl_r = requests.post(HF_CRAWL4AI_URL, json={"url": url}, timeout=30)
+                if crawl_r.status_code == 200:
+                    markdown = crawl_r.json().get("markdown", "")
+                    if markdown:
+                        page = {"title": title, "url": url, "markdown": markdown}
+                        crawled_pages.append(page)
+                        yield sse("crawled", {"page": page})
+            except Exception:
+                continue
+
+        context_str = ""
+        if crawled_pages:
+            for idx, page in enumerate(crawled_pages, 1):
+                context_str += f"\nSource #{idx}: {page['title']} ({page['url']})\n---\n{page['markdown'][:4000]}\n---\n"
+        else:
+            context_str = "\n".join(
+                f"Source #{i+1}: {r['title']} ({r['url']})\n{r['content']}"
+                for i, r in enumerate(search_results[:5])
+            )
+
+        prompt = (
+            f"Write a comprehensive Markdown research report answering: \"{query}\".\n\n"
+            f"Use these sources:\n{context_str}\n\n"
+            f"Format with Markdown headers. Cite sources as [1], [2] etc."
+        )
+
+        try:
+            llm_response = requests.post(
+                f"{llm_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
+                json={
+                    "model": llm_model,
+                    "messages": [
+                        {"role": "system", "content": "You are a precise research assistant."},
+                        {"role": "user",   "content": prompt}
+                    ],
+                    "temperature": 0.2,
+                    "stream": True
+                },
+                stream=True,
+                timeout=60
+            )
+
+            for line in llm_response.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                if line.startswith("data: "):
+                    chunk = line[6:]
+                    if chunk.strip() == "[DONE]":
+                        break
+                    try:
+                        token = json.loads(chunk)["choices"][0]["delta"].get("content", "")
+                        if token:
+                            full_summary += token
+                            yield sse("token", {"text": token})
+                    except Exception:
+                        continue
+
+        except Exception as e:
+            yield sse("step", {"text": f"⚠️ LLM error: {str(e)[:80]}", "phase": "error"})
+
+    yield sse("done", {
+        "summary": full_summary,
+        "search_results": search_results,
+        "crawled_pages": crawled_pages
+    })
 
 
 @app.get("/api/vane/providers")
