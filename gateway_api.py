@@ -1,32 +1,38 @@
 """
 Filename: gateway_api.py
-Purpose: FastAPI Web App & Gateway providing a unified web UI and research API endpoint.
-Target Workspace Environment: Antigravity Agentic Workspace
+Purpose: FastAPI Web App & Gateway — unified search + streaming AI answer engine.
 """
 
 import os
+import json
 import requests
-from typing import Optional
-from fastapi import FastAPI, HTTPException, status
+from typing import Optional, Iterator
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Initialize FastAPI App
 app = FastAPI(
     title="Aether Search - Unified Research Gateway",
-    version="2.0.0",
-    description="Unified API and Web UI combining SearXNG, Vane, and Crawl4AI.",
+    version="3.0.0",
+    description="Unified API and Web UI combining SearXNG, Vane, and Crawl4AI with SSE streaming.",
 )
 
 # Service URLs
-RENDER_SEARXNG_URL = os.environ.get("RENDER_SEARXNG_URL", "https://my-searxng-api.onrender.com/search")
+RENDER_SEARXNG_URL = os.environ.get("RENDER_SEARXNG_URL", "https://my-searxng-5k3k.onrender.com/search")
 HF_CRAWL4AI_URL    = os.environ.get("HF_CRAWL4AI_URL",    "https://imy805-crawl4ai.hf.space/extract")
 HF_VANE_URL        = os.environ.get("HF_VANE_URL",        "https://imy805-vane.hf.space")
 
-# Default LLM config (fallback when no provider sent per-request)
+# Default LLM config
 DEFAULT_LLM_URL   = os.environ.get("DEFAULT_LLM_URL",   "https://api.groq.com/openai/v1")
 DEFAULT_LLM_KEY   = os.environ.get("DEFAULT_LLM_KEY",   "")
 DEFAULT_LLM_MODEL = os.environ.get("DEFAULT_LLM_MODEL", "llama3-8b-8192")
+
+# Domains that block headless browsers
+BLOCKED_DOMAINS = [
+    "openai.com", "twitter.com", "x.com", "facebook.com",
+    "instagram.com", "linkedin.com", "reddit.com", "tiktok.com"
+]
 
 # Request Models
 class ProviderConfig(BaseModel):
@@ -41,13 +47,9 @@ class ResearchRequest(BaseModel):
     provider: Optional[ProviderConfig] = None
 
 
-BLOCKED_DOMAINS = [
-    "openai.com", "twitter.com", "x.com", "facebook.com",
-    "instagram.com", "linkedin.com", "reddit.com", "tiktok.com"
-]
-
 def is_crawlable(url: str) -> bool:
     return not any(domain in url for domain in BLOCKED_DOMAINS)
+
 
 def detect_provider_id(base_url: str) -> str:
     if not base_url:
@@ -63,202 +65,233 @@ def detect_provider_id(base_url: str) -> str:
     return "custom_openai"
 
 
-@app.post("/api/research", status_code=status.HTTP_200_OK)
-def perform_research(request_data: ResearchRequest):
-    """
-    Unified search + AI answer endpoint.
-    AI OFF: direct SearXNG results.
-    AI ON: Vane answer engine (SearXNG + LLM) with crawl4ai deep-crawl of top sources.
-    Fallback: direct SearXNG + LLM synthesis if Vane is unavailable.
-    """
-    query     = request_data.query
-    use_ai    = request_data.use_ai
-    dev_focus = request_data.dev_focus
+def sse(event: str, data: dict) -> str:
+    """Format a Server-Sent Event."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
+
+def stream_research(query: str, use_ai: bool, dev_focus: bool,
+                    llm_url: str, llm_key: str, llm_model: str) -> Iterator[str]:
+    """
+    Generator that yields SSE events in order:
+    step → sources → crawled (per page) → token (per LLM chunk) → done
+    """
+
+    # ── STEP 1: Search SearXNG ────────────────────────────────────────────────
+    yield sse("step", {"text": "🔍 Searching SearXNG...", "phase": "search"})
+
+    search_params = {"q": query, "format": "json"}
+    if dev_focus:
+        search_params["categories"] = "it"
+        search_params["engines"]    = "github,stackoverflow"
+
+    try:
+        r = requests.get(RENDER_SEARXNG_URL, params=search_params, timeout=15)
+        results = r.json().get("results", []) if r.status_code == 200 else []
+    except Exception:
+        results = []
+
+    if not results:
+        yield sse("step", {"text": "⚠️ No results found.", "phase": "error"})
+        yield sse("done", {"summary": "", "search_results": [], "crawled_pages": []})
+        return
+
+    search_results = [{"title": r.get("title", "Untitled"),
+                       "url":   r.get("url", ""),
+                       "content": r.get("content", "")} for r in results]
+
+    yield sse("step", {"text": f"✅ Found {len(search_results)} results", "phase": "search_done"})
+    yield sse("sources", {"results": search_results})
+
+    # ── AI OFF: done after sources ────────────────────────────────────────────
+    if not use_ai:
+        yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": []})
+        return
+
+    # ── STEP 2: Crawl top pages ───────────────────────────────────────────────
+    crawled_pages = []
+    crawlable = [r for r in results if is_crawlable(r.get("url", ""))]
+
+    for item in crawlable[:3]:
+        url   = item.get("url", "")
+        title = item.get("title", "Untitled")
+        if not url:
+            continue
+        try:
+            domain = url.split("/")[2]
+            yield sse("step", {"text": f"🕷️ Crawling {domain}...", "phase": "crawl"})
+            crawl_r = requests.post(HF_CRAWL4AI_URL, json={"url": url}, timeout=30)
+            if crawl_r.status_code == 200:
+                markdown = crawl_r.json().get("markdown", "")
+                if markdown:
+                    page = {"title": title, "url": url, "markdown": markdown}
+                    crawled_pages.append(page)
+                    yield sse("crawled", {"page": page})
+        except Exception:
+            continue
+
+    if not llm_key:
+        yield sse("step", {"text": "⚠️ No API key configured. Set it in Settings.", "phase": "error"})
+        yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": crawled_pages})
+        return
+
+    # ── STEP 3: Stream LLM answer ─────────────────────────────────────────────
+    yield sse("step", {"text": "🧠 Generating answer...", "phase": "generate"})
+
+    if crawled_pages:
+        context_str = ""
+        for idx, page in enumerate(crawled_pages, 1):
+            context_str += f"\nSource #{idx}: {page['title']} ({page['url']})\n"
+            context_str += f"---\n{page['markdown'][:4000]}\n---\n"
+    else:
+        # Fall back to search snippets if no pages were crawled
+        context_str = "\n".join(
+            f"Source #{i+1}: {r['title']} ({r['url']})\n{r['content']}"
+            for i, r in enumerate(search_results[:5])
+        )
+
+    prompt = (
+        f"You are a professional research assistant. Write a comprehensive, well-structured "
+        f"Markdown research report answering: \"{query}\".\n\n"
+        f"Use these sources:\n{context_str}\n\n"
+        f"Format in clean Markdown with headers. Cite sources as [1], [2] etc."
+    )
+
+    try:
+        llm_response = requests.post(
+            f"{llm_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
+            json={
+                "model": llm_model,
+                "messages": [
+                    {"role": "system", "content": "You are a precise researcher. Write factual reports based strictly on the provided sources."},
+                    {"role": "user",   "content": prompt}
+                ],
+                "temperature": 0.2,
+                "stream": True
+            },
+            stream=True,
+            timeout=60
+        )
+
+        full_summary = ""
+        for line in llm_response.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            if line.startswith("data: "):
+                chunk = line[6:]
+                if chunk.strip() == "[DONE]":
+                    break
+                try:
+                    token = json.loads(chunk)["choices"][0]["delta"].get("content", "")
+                    if token:
+                        full_summary += token
+                        yield sse("token", {"text": token})
+                except Exception:
+                    continue
+
+        yield sse("done", {
+            "summary": full_summary,
+            "search_results": search_results,
+            "crawled_pages": crawled_pages
+        })
+
+    except Exception as e:
+        yield sse("step", {"text": f"⚠️ LLM error: {str(e)[:80]}", "phase": "error"})
+        yield sse("done", {"summary": "", "search_results": search_results, "crawled_pages": crawled_pages})
+
+
+@app.post("/api/research/stream")
+def research_stream(request_data: ResearchRequest):
+    """Streaming SSE endpoint — emits step/sources/crawled/token/done events."""
     req_provider = request_data.provider
     llm_url   = (req_provider.base_url if req_provider and req_provider.base_url else DEFAULT_LLM_URL)
     llm_key   = (req_provider.api_key  if req_provider and req_provider.api_key  else DEFAULT_LLM_KEY)
     llm_model = (req_provider.model    if req_provider and req_provider.model    else DEFAULT_LLM_MODEL)
 
-    # ── AI OFF: plain SearXNG search ─────────────────────────────────────────
-    if not use_ai:
-        search_params = {"q": query, "format": "json"}
-        if dev_focus:
-            search_params["categories"] = "it"
-            search_params["engines"]    = "github,stackoverflow"
+    return StreamingResponse(
+        stream_research(
+            query=request_data.query,
+            use_ai=request_data.use_ai,
+            dev_focus=request_data.dev_focus,
+            llm_url=llm_url,
+            llm_key=llm_key,
+            llm_model=llm_model
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
-        try:
-            search_response = requests.get(RENDER_SEARXNG_URL, params=search_params, timeout=15)
-            if search_response.status_code != 200:
-                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                                    detail="SearXNG returned an error.")
-            results = search_response.json().get("results", [])
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                                detail=f"SearXNG connection failed: {str(e)}")
 
-        search_results = [{"title":   r.get("title", "Untitled"),
-                           "url":     r.get("url", ""),
-                           "content": r.get("content", "")} for r in results]
-        return {"status": "success", "query": query,
-                "research_summary": "", "search_results": search_results, "crawled_pages": []}
+# Keep old endpoint as fallback for n8n / external API calls
+@app.post("/api/research")
+def perform_research(request_data: ResearchRequest):
+    """Non-streaming endpoint for n8n and external API consumers."""
+    req_provider = request_data.provider
+    llm_url   = (req_provider.base_url if req_provider and req_provider.base_url else DEFAULT_LLM_URL)
+    llm_key   = (req_provider.api_key  if req_provider and req_provider.api_key  else DEFAULT_LLM_KEY)
+    llm_model = (req_provider.model    if req_provider and req_provider.model    else DEFAULT_LLM_MODEL)
 
-    # ── AI ON: Vane answer engine ─────────────────────────────────────────────
-    research_summary = ""
-    search_results   = []
-    crawled_pages    = []
-    vane_succeeded   = False
+    summary       = ""
+    search_results = []
+    crawled_pages  = []
 
-    if llm_key:
-        try:
-            vane_payload = {
-                "chatModel": {
-                    "providerId": detect_provider_id(llm_url),
-                    "key": llm_model
-                },
-                "embeddingModel": {
-                    "providerId": "local",
-                    "key": "xenova/gte-small"
-                },
-                "focusMode": "webSearch",
-                "optimizationMode": "balanced",
-                "query": query,
-                "stream": False,
-                "systemInstructions": (
-                    "You are a professional research assistant. "
-                    "Write a comprehensive, well-structured, cited Markdown report."
-                )
-            }
-            vane_headers = {
-                "Authorization": f"Bearer {llm_key}",
-                "Content-Type": "application/json"
-            }
-            vane_response = requests.post(
-                f"{HF_VANE_URL.rstrip('/')}/api/search",
-                json=vane_payload,
-                headers=vane_headers,
-                timeout=60
-            )
-            if vane_response.status_code == 200:
-                vane_data        = vane_response.json()
-                research_summary = vane_data.get("message", "")
-                sources          = vane_data.get("sources", [])
-                search_results   = [
-                    {
-                        "title":   s.get("metadata", {}).get("title", "Untitled"),
-                        "url":     s.get("metadata", {}).get("url", ""),
-                        "content": s.get("pageContent", "")[:500]
-                    }
-                    for s in sources
-                ]
-                vane_succeeded = True
-
-                # Deep-crawl top crawlable source URLs via crawl4ai
-                crawl_candidates = [s for s in sources if is_crawlable(s.get("metadata", {}).get("url", ""))]
-                for source in crawl_candidates[:3]:
-                    url   = source.get("metadata", {}).get("url", "")
-                    title = source.get("metadata", {}).get("title", "Untitled")
-                    if not url:
-                        continue
+    # Collect all events from the stream generator
+    for raw in stream_research(request_data.query, request_data.use_ai,
+                                request_data.dev_focus, llm_url, llm_key, llm_model):
+        for line in raw.split("\n"):
+            if line.startswith("data: "):
+                try:
+                    d = json.loads(line[6:])
+                except Exception:
+                    continue
+        # Parse done event for final payload
+        if raw.startswith("event: done"):
+            for line in raw.split("\n"):
+                if line.startswith("data: "):
                     try:
-                        crawl_response = requests.post(
-                            HF_CRAWL4AI_URL,
-                            json={"url": url},
-                            timeout=30
-                        )
-                        if crawl_response.status_code == 200:
-                            crawled_pages.append({
-                                "title":    title,
-                                "url":      url,
-                                "markdown": crawl_response.json().get("markdown", "")
-                            })
+                        d = json.loads(line[6:])
+                        summary        = d.get("summary", "")
+                        search_results = d.get("search_results", [])
+                        crawled_pages  = d.get("crawled_pages", [])
                     except Exception:
-                        continue
-
-        except Exception:
-            vane_succeeded = False
-
-    # ── Fallback: direct SearXNG + LLM synthesis ─────────────────────────────
-    if not vane_succeeded:
-        search_params = {"q": query, "format": "json"}
-        if dev_focus:
-            search_params["categories"] = "it"
-            search_params["engines"]    = "github,stackoverflow"
-
-        try:
-            search_response = requests.get(RENDER_SEARXNG_URL, params=search_params, timeout=15)
-            results = search_response.json().get("results", []) if search_response.status_code == 200 else []
-        except Exception:
-            results = []
-
-        search_results = [{"title":   r.get("title", "Untitled"),
-                           "url":     r.get("url", ""),
-                           "content": r.get("content", "")} for r in results]
-
-        crawlable_results = [r for r in results if is_crawlable(r.get("url", ""))]
-        for item in crawlable_results[:3]:
-            url   = item.get("url", "")
-            title = item.get("title", "Untitled")
-            if not url:
-                continue
-            try:
-                crawl_response = requests.post(HF_CRAWL4AI_URL, json={"url": url}, timeout=30)
-                if crawl_response.status_code == 200:
-                    crawled_pages.append({
-                        "title":    title,
-                        "url":      url,
-                        "markdown": crawl_response.json().get("markdown", "")
-                    })
-            except Exception:
-                continue
-
-        if not llm_key:
-            research_summary = "AI API Key is missing. Please configure your API key in settings."
-        elif crawled_pages:
-            context_str = ""
-            for idx, page in enumerate(crawled_pages, 1):
-                context_str += f"\nSource #{idx}: {page['title']} ({page['url']})\n"
-                context_str += f"---\n{page['markdown'][:4000]}\n---\n"
-
-            prompt = (
-                f"You are a professional research assistant. Synthesize a comprehensive research report "
-                f"answering the query: \"{query}\".\n"
-                f"Use the following source texts crawled from the web:\n{context_str}\n"
-                f"Format in Markdown. Cite sources with [1], [2] etc."
-            )
-            try:
-                llm_response = requests.post(
-                    f"{llm_url.rstrip('/')}/chat/completions",
-                    headers={"Authorization": f"Bearer {llm_key}", "Content-Type": "application/json"},
-                    json={
-                        "model": llm_model,
-                        "messages": [
-                            {"role": "system", "content": "You are a precise researcher. Write factual summaries based strictly on the provided context."},
-                            {"role": "user",   "content": prompt}
-                        ],
-                        "temperature": 0.2
-                    },
-                    timeout=30
-                )
-                if llm_response.status_code == 200:
-                    research_summary = llm_response.json().get("choices", [{}])[0].get("message", {}).get("content", "Failed to generate report.")
-                else:
-                    research_summary = f"LLM Provider Error: {llm_response.status_code}"
-            except Exception as e:
-                research_summary = f"LLM connection failed: {str(e)}"
-        else:
-            research_summary = "Failed to crawl web sources. Cannot synthesize summary."
+                        pass
+        elif raw.startswith("event: token"):
+            for line in raw.split("\n"):
+                if line.startswith("data: "):
+                    try:
+                        summary += json.loads(line[6:]).get("text", "")
+                    except Exception:
+                        pass
+        elif raw.startswith("event: sources"):
+            for line in raw.split("\n"):
+                if line.startswith("data: "):
+                    try:
+                        search_results = json.loads(line[6:]).get("results", [])
+                    except Exception:
+                        pass
+        elif raw.startswith("event: crawled"):
+            for line in raw.split("\n"):
+                if line.startswith("data: "):
+                    try:
+                        page = json.loads(line[6:]).get("page")
+                        if page:
+                            crawled_pages.append(page)
+                    except Exception:
+                        pass
 
     return {
         "status": "success",
-        "query": query,
-        "research_summary": research_summary,
+        "query": request_data.query,
+        "research_summary": summary,
         "search_results": search_results,
         "crawled_pages": crawled_pages
     }
 
 
-# Mount static files — must be last so it doesn't override API routes
+# Mount static files — must be last
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

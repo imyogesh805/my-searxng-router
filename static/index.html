@@ -4,11 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aether Search - Unified AI Research Engine</title>
-    <!-- Modern Typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome icons for clean UI elements -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="index.css">
 </head>
@@ -25,7 +23,7 @@
             </button>
         </header>
 
-        <!-- Main Search Form -->
+        <!-- Search Form -->
         <main class="search-section">
             <div class="search-container-wrapper">
                 <div class="search-box-container">
@@ -34,8 +32,6 @@
                         <i class="fa-solid fa-arrow-up"></i>
                     </button>
                 </div>
-                
-                <!-- Controls and Toggles -->
                 <div class="search-controls">
                     <div class="control-group">
                         <span class="control-label">AI Search</span>
@@ -44,7 +40,6 @@
                             <span class="slider"></span>
                         </label>
                     </div>
-                    
                     <div class="control-group">
                         <span class="control-label">Dev Focus</span>
                         <label class="toggle-switch">
@@ -56,39 +51,35 @@
             </div>
         </main>
 
-        <!-- Status & Progress Indicators -->
-        <div id="statusIndicator" class="status-container hidden">
-            <div class="spinner"></div>
-            <span id="statusText">Preparing query...</span>
-        </div>
+        <!-- Live Pipeline Steps -->
+        <div id="pipelineSteps" class="pipeline-steps hidden"></div>
 
-        <!-- Results Display Panel -->
+        <!-- Results Panel -->
         <section id="resultsSection" class="results-container hidden">
-            <!-- Left Side: Synthesized AI Summary -->
-            <div id="aiSummaryCard" class="result-card ai-summary-card">
+
+            <!-- Left: AI Summary (streaming) -->
+            <div id="aiSummaryCard" class="result-card ai-summary-card hidden">
                 <div class="card-header">
                     <i class="fa-solid fa-brain header-icon"></i>
                     <h2>Research Summary</h2>
+                    <span id="streamingDot" class="streaming-dot"></span>
                 </div>
-                <div id="aiResponseContent" class="card-body markdown-body">
-                    <!-- AI response goes here -->
-                </div>
+                <div id="aiResponseContent" class="card-body markdown-body"></div>
             </div>
 
-            <!-- Right Side: Sources and Scraped Crawl Data -->
-            <div class="result-card sources-card">
+            <!-- Right: Sources + Crawled Pages -->
+            <div id="sourcesCard" class="result-card sources-card hidden">
                 <div class="card-header">
                     <i class="fa-solid fa-globe header-icon"></i>
-                    <h2>Sources & Crawled Pages</h2>
+                    <h2 id="sourcesHeader">Sources</h2>
                 </div>
-                <div id="sourcesList" class="card-body sources-list">
-                    <!-- Source list items and crawl buttons go here -->
-                </div>
+                <div id="sourcesList" class="card-body sources-list"></div>
             </div>
+
         </section>
     </div>
 
-    <!-- Settings Configuration Modal -->
+    <!-- Settings Modal -->
     <div id="settingsModal" class="modal-overlay hidden">
         <div class="modal-content glass-card">
             <div class="modal-header">
@@ -96,18 +87,15 @@
                 <button id="closeSettingsBtn" class="close-btn">&times;</button>
             </div>
             <div class="modal-body">
-                <p class="modal-desc">Configure your preferred LLM provider details. These settings are stored locally in your browser.</p>
-                
+                <p class="modal-desc">Configure your LLM provider. Stored locally in your browser.</p>
                 <div class="input-group">
                     <label for="providerUrl">API Base URL</label>
                     <input type="text" id="providerUrl" placeholder="https://api.groq.com/openai/v1">
                 </div>
-
                 <div class="input-group">
                     <label for="providerKey">API Key</label>
-                    <input type="password" id="providerKey" placeholder="Enter your provider API Key">
+                    <input type="password" id="providerKey" placeholder="Enter your API Key">
                 </div>
-
                 <div class="input-group">
                     <label for="providerModel">Model ID</label>
                     <input type="text" id="providerModel" placeholder="llama3-8b-8192">
@@ -119,7 +107,7 @@
         </div>
     </div>
 
-    <!-- Crawl Viewer Modal (for inspecting full Markdown details of crawled pages) -->
+    <!-- Crawl Viewer Modal -->
     <div id="crawlModal" class="modal-overlay hidden">
         <div class="modal-content crawl-modal-content glass-card">
             <div class="modal-header">

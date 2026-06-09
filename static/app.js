@@ -1,228 +1,295 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // DOM Elements
-    const searchInput = document.getElementById('searchInput');
-    const submitBtn = document.getElementById('submitBtn');
-    const aiToggle = document.getElementById('aiToggle');
-    const devToggle = document.getElementById('devToggle');
-    const statusIndicator = document.getElementById('statusIndicator');
-    const statusText = document.getElementById('statusText');
-    const resultsSection = document.getElementById('resultsSection');
-    const aiSummaryCard = document.getElementById('aiSummaryCard');
-    const aiResponseContent = document.getElementById('aiResponseContent');
-    const sourcesList = document.getElementById('sourcesList');
+    // DOM
+    const searchInput      = document.getElementById('searchInput');
+    const submitBtn        = document.getElementById('submitBtn');
+    const aiToggle         = document.getElementById('aiToggle');
+    const devToggle        = document.getElementById('devToggle');
+    const pipelineSteps    = document.getElementById('pipelineSteps');
+    const resultsSection   = document.getElementById('resultsSection');
+    const aiSummaryCard    = document.getElementById('aiSummaryCard');
+    const aiResponseContent= document.getElementById('aiResponseContent');
+    const streamingDot     = document.getElementById('streamingDot');
+    const sourcesCard      = document.getElementById('sourcesCard');
+    const sourcesList      = document.getElementById('sourcesList');
+    const sourcesHeader    = document.getElementById('sourcesHeader');
 
-    // Settings Modal Elements
-    const settingsBtn = document.getElementById('settingsBtn');
-    const settingsModal = document.getElementById('settingsModal');
+    // Settings
+    const settingsBtn      = document.getElementById('settingsBtn');
+    const settingsModal    = document.getElementById('settingsModal');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    const saveSettingsBtn  = document.getElementById('saveSettingsBtn');
     const providerUrlInput = document.getElementById('providerUrl');
     const providerKeyInput = document.getElementById('providerKey');
     const providerModelInput = document.getElementById('providerModel');
 
-    // Crawl Viewer Modal Elements
-    const crawlModal = document.getElementById('crawlModal');
-    const closeCrawlBtn = document.getElementById('closeCrawlBtn');
-    const crawlModalTitle = document.getElementById('crawlModalTitle');
-    const crawlModalContent = document.getElementById('crawlModalContent');
+    // Crawl modal
+    const crawlModal       = document.getElementById('crawlModal');
+    const closeCrawlBtn    = document.getElementById('closeCrawlBtn');
+    const crawlModalTitle  = document.getElementById('crawlModalTitle');
+    const crawlModalContent= document.getElementById('crawlModalContent');
 
-    // Cache of crawled pages from the last search
-    let currentSources = [];
+    let currentCrawledPages = [];
+    let activeReader = null;
 
-    // Load configurations from LocalStorage
+    // ── Settings ──────────────────────────────────────────────────────────────
     function loadSettings() {
-        providerUrlInput.value = localStorage.getItem('ai_provider_url') || 'https://api.groq.com/openai/v1';
-        providerKeyInput.value = localStorage.getItem('ai_provider_key') || '';
+        providerUrlInput.value   = localStorage.getItem('ai_provider_url')   || 'https://api.groq.com/openai/v1';
+        providerKeyInput.value   = localStorage.getItem('ai_provider_key')   || '';
         providerModelInput.value = localStorage.getItem('ai_provider_model') || 'llama3-8b-8192';
     }
 
-    // Save configurations to LocalStorage
     function saveSettings() {
-        localStorage.setItem('ai_provider_url', providerUrlInput.value.trim());
-        localStorage.setItem('ai_provider_key', providerKeyInput.value.trim());
+        localStorage.setItem('ai_provider_url',   providerUrlInput.value.trim());
+        localStorage.setItem('ai_provider_key',   providerKeyInput.value.trim());
         localStorage.setItem('ai_provider_model', providerModelInput.value.trim());
-        hideElement(settingsModal);
+        hide(settingsModal);
     }
 
-    // Helper functions for visibility
-    function showElement(el) {
-        el.classList.remove('hidden');
-    }
-    function hideElement(el) {
-        el.classList.add('hidden');
-    }
-
-    // Auto-growing textarea for search box
-    searchInput.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
-    });
-
-    // Settings Modal Triggers
-    settingsBtn.addEventListener('click', () => {
-        loadSettings();
-        showElement(settingsModal);
-    });
-    closeSettingsBtn.addEventListener('click', () => hideElement(settingsModal));
+    settingsBtn.addEventListener('click', () => { loadSettings(); show(settingsModal); });
+    closeSettingsBtn.addEventListener('click', () => hide(settingsModal));
     saveSettingsBtn.addEventListener('click', saveSettings);
+    window.addEventListener('click', e => {
+        if (e.target === settingsModal) hide(settingsModal);
+        if (e.target === crawlModal)    hide(crawlModal);
+    });
+    closeCrawlBtn.addEventListener('click', () => hide(crawlModal));
 
-    // Close Modals when clicking outside content area
-    window.addEventListener('click', (e) => {
-        if (e.target === settingsModal) hideElement(settingsModal);
-        if (e.target === crawlModal) hideElement(crawlModal);
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function show(el) { el.classList.remove('hidden'); }
+    function hide(el) { el.classList.add('hidden'); }
+
+    searchInput.addEventListener('input', function () {
+        this.style.height = 'auto';
+        this.style.height = this.scrollHeight + 'px';
     });
 
-    // Close Crawl Modal
-    closeCrawlBtn.addEventListener('click', () => hideElement(crawlModal));
+    // ── Pipeline step indicator ───────────────────────────────────────────────
+    function addStep(text, phase) {
+        show(pipelineSteps);
+        const existing = pipelineSteps.querySelector('.step-active');
+        if (existing) {
+            existing.classList.remove('step-active');
+            existing.classList.add('step-done');
+            const icon = existing.querySelector('.step-icon');
+            if (icon) icon.className = 'step-icon fa-solid fa-check';
+        }
+        if (phase === 'error') {
+            const el = document.createElement('div');
+            el.className = 'pipeline-step step-error';
+            el.innerHTML = `<i class="step-icon fa-solid fa-triangle-exclamation"></i><span>${text}</span>`;
+            pipelineSteps.appendChild(el);
+            return;
+        }
+        if (phase === 'search_done' || phase === 'done') return;
 
-    // Handle submit search action
+        const el = document.createElement('div');
+        el.className = 'pipeline-step step-active';
+        el.innerHTML = `<span class="step-spinner"></span><span>${text}</span>`;
+        pipelineSteps.appendChild(el);
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function finishSteps() {
+        pipelineSteps.querySelectorAll('.step-active').forEach(el => {
+            el.classList.remove('step-active');
+            el.classList.add('step-done');
+            const icon = el.querySelector('.step-spinner');
+            if (icon) {
+                icon.outerHTML = '<i class="step-icon fa-solid fa-check"></i>';
+            }
+        });
+    }
+
+    // ── Render sources ────────────────────────────────────────────────────────
+    function renderSources(results) {
+        show(sourcesCard);
+        show(resultsSection);
+        sourcesList.innerHTML = '';
+        currentCrawledPages = [];
+
+        results.forEach(result => {
+            const item = document.createElement('div');
+            item.className = 'source-item';
+            item.dataset.url = result.url;
+            item.innerHTML = `
+                <div class="source-title">
+                    <a href="${result.url}" target="_blank" rel="noopener">${result.title}</a>
+                </div>
+                <div class="source-url-text">${result.url}</div>
+                <div class="source-snippet">${result.content || 'No snippet available.'}</div>
+            `;
+            sourcesList.appendChild(item);
+        });
+    }
+
+    // ── Add crawled badge to source item ──────────────────────────────────────
+    function markSourceCrawled(page) {
+        currentCrawledPages.push(page);
+        const idx = currentCrawledPages.length - 1;
+        const item = sourcesList.querySelector(`[data-url="${page.url}"]`);
+        if (item && !item.querySelector('.view-crawl-btn')) {
+            const actions = document.createElement('div');
+            actions.className = 'source-actions';
+            actions.style.marginTop = '0.75rem';
+            actions.innerHTML = `
+                <button class="action-btn view-crawl-btn" data-index="${idx}">
+                    <i class="fa-solid fa-code"></i> View Crawled Content
+                </button>
+            `;
+            item.appendChild(actions);
+            actions.querySelector('.view-crawl-btn').addEventListener('click', function () {
+                openCrawlViewer(parseInt(this.dataset.index));
+            });
+            // Highlight the crawled source card
+            item.classList.add('source-crawled');
+        }
+    }
+
+    function openCrawlViewer(index) {
+        const page = currentCrawledPages[index];
+        if (!page) return;
+        crawlModalTitle.textContent = page.title || 'Raw Crawled Content';
+        crawlModalContent.textContent = page.markdown || 'No content extracted.';
+        show(crawlModal);
+    }
+
+    // ── Main search handler ───────────────────────────────────────────────────
     async function handleSearch() {
         const queryText = searchInput.value.trim();
         if (!queryText) return;
 
+        // Cancel any previous stream
+        if (activeReader) {
+            try { activeReader.cancel(); } catch (_) {}
+            activeReader = null;
+        }
+
         // Reset UI
-        hideElement(resultsSection);
-        showElement(statusIndicator);
-        statusText.textContent = "Executing search query on SearXNG...";
+        hide(resultsSection);
+        hide(aiSummaryCard);
+        hide(sourcesCard);
+        pipelineSteps.innerHTML = '';
+        hide(pipelineSteps);
+        aiResponseContent.textContent = '';
+        sourcesList.innerHTML = '';
+        currentCrawledPages = [];
+        streamingDot.classList.remove('hidden');
         submitBtn.disabled = true;
 
-        // Gather Provider configuration
-        const providerUrl = localStorage.getItem('ai_provider_url') || providerUrlInput.value.trim();
-        const providerKey = localStorage.getItem('ai_provider_key') || providerKeyInput.value.trim();
-        const providerModel = localStorage.getItem('ai_provider_model') || providerModelInput.value.trim();
-
-        const useAi = aiToggle.checked;
+        const useAi    = aiToggle.checked;
         const devFocus = devToggle.checked;
 
-        // Build Payload
+        const providerUrl   = localStorage.getItem('ai_provider_url')   || '';
+        const providerKey   = localStorage.getItem('ai_provider_key')   || '';
+        const providerModel = localStorage.getItem('ai_provider_model') || 'llama3-8b-8192';
+
         const payload = {
             query: queryText,
             use_ai: useAi,
-            dev_focus: devFocus
+            dev_focus: devFocus,
+            provider: {
+                base_url: providerUrl   || undefined,
+                api_key:  providerKey   || undefined,
+                model:    providerModel || undefined
+            }
         };
 
-        // Attach provider settings if available
-        if (providerUrl || providerKey || providerModel) {
-            payload.provider = {
-                base_url: providerUrl || undefined,
-                api_key: providerKey || undefined,
-                model: providerModel || undefined
-            };
-        }
-
         try {
-            // Update progress message
-            if (useAi) {
-                statusText.textContent = "Querying Vane answer engine...";
-            } else {
-                statusText.textContent = "Searching web targets and extracting page layouts...";
-            }
-
-            const response = await fetch('/api/research', {
+            const response = await fetch('/api/research/stream', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || "Query execution failed.");
+                const err = await response.json();
+                addStep(`Error: ${err.detail || 'Request failed'}`, 'error');
+                submitBtn.disabled = false;
+                return;
             }
 
-            const data = await response.json();
-            displayResults(data, useAi);
+            const reader = response.body.getReader();
+            activeReader = reader;
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop(); // keep incomplete chunk
+
+                for (const part of parts) {
+                    if (!part.trim()) continue;
+
+                    let eventType = 'message';
+                    let dataStr   = '';
+
+                    for (const line of part.split('\n')) {
+                        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+                        if (line.startsWith('data: '))  dataStr   = line.slice(6).trim();
+                    }
+
+                    let data;
+                    try { data = JSON.parse(dataStr); } catch (_) { continue; }
+
+                    switch (eventType) {
+
+                        case 'step':
+                            addStep(data.text, data.phase);
+                            break;
+
+                        case 'sources':
+                            sourcesHeader.textContent = useAi ? 'Sources' : 'Search Results';
+                            renderSources(data.results || []);
+                            if (useAi) {
+                                show(aiSummaryCard);
+                                show(resultsSection);
+                                resultsSection.style.gridTemplateColumns = '1.6fr 1fr';
+                            } else {
+                                resultsSection.style.gridTemplateColumns = '1fr';
+                            }
+                            break;
+
+                        case 'crawled':
+                            if (data.page) markSourceCrawled(data.page);
+                            break;
+
+                        case 'token':
+                            show(aiSummaryCard);
+                            show(resultsSection);
+                            aiResponseContent.textContent += data.text;
+                            aiResponseContent.scrollTop = aiResponseContent.scrollHeight;
+                            break;
+
+                        case 'done':
+                            finishSteps();
+                            streamingDot.classList.add('hidden');
+                            submitBtn.disabled = false;
+                            activeReader = null;
+                            break;
+                    }
+                }
+            }
 
         } catch (err) {
-            alert(`Error: ${err.message}`);
-            hideElement(statusIndicator);
+            addStep(`Connection error: ${err.message}`, 'error');
         } finally {
             submitBtn.disabled = false;
+            streamingDot.classList.add('hidden');
+            activeReader = null;
         }
     }
 
-    // Trigger Search on Button Click
     submitBtn.addEventListener('click', handleSearch);
-
-    // Trigger Search on Enter (Shift+Enter to newline)
-    searchInput.addEventListener('keydown', (e) => {
+    searchInput.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSearch();
         }
     });
 
-    // Display Results in split-screen format
-    function displayResults(data, useAi) {
-        hideElement(statusIndicator);
-        
-        // Dynamically adjust grid layout for full-width search results when AI is off
-        if (useAi) {
-            resultsSection.style.gridTemplateColumns = "1.6fr 1fr";
-            showElement(aiSummaryCard);
-            aiResponseContent.textContent = data.research_summary || "No research summary was returned.";
-        } else {
-            resultsSection.style.gridTemplateColumns = "1fr";
-            hideElement(aiSummaryCard);
-        }
-        
-        showElement(resultsSection);
-
-        // Render search results like SearXNG
-        sourcesList.innerHTML = '';
-        const searchResults = data.search_results || [];
-        currentSources = data.crawled_pages || [];
-
-        if (searchResults.length === 0) {
-            sourcesList.innerHTML = '<p class="modal-desc">No search results located for this query.</p>';
-            return;
-        }
-
-        searchResults.forEach((result) => {
-            const item = document.createElement('div');
-            item.className = 'source-item';
-            
-            // Check if this URL was crawled
-            const crawlIndex = currentSources.findIndex(p => p.url === result.url);
-            const showCrawlBtn = crawlIndex !== -1;
-
-            item.innerHTML = `
-                <div class="source-title">
-                    <a href="${result.url}" target="_blank">${result.title}</a>
-                </div>
-                <div class="source-url-text">${result.url}</div>
-                <div class="source-snippet">${result.content || 'No snippet description available.'}</div>
-                ${showCrawlBtn ? `
-                <div class="source-actions" style="margin-top: 0.75rem;">
-                    <button class="action-btn view-crawl-btn" data-index="${crawlIndex}">
-                        <i class="fa-solid fa-code"></i> View Crawl Markdown
-                    </button>
-                </div>
-                ` : ''}
-            `;
-            sourcesList.appendChild(item);
-        });
-
-        // Add click event listeners to "View Crawl Markdown" buttons
-        document.querySelectorAll('.view-crawl-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const idx = parseInt(this.getAttribute('data-index'));
-                openCrawlViewer(idx);
-            });
-        });
-    }
-
-    // Open Raw Crawl Viewer Modal
-    function openCrawlViewer(index) {
-        const sourceDoc = currentSources[index];
-        if (!sourceDoc) return;
-
-        crawlModalTitle.textContent = sourceDoc.title || "Raw Crawled Content";
-        crawlModalContent.textContent = sourceDoc.markdown || "No content extracted from this page.";
-        showElement(crawlModal);
-    }
-
-    // Initialize inputs on page load
     loadSettings();
 });
