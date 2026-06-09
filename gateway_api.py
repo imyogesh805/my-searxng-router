@@ -112,33 +112,62 @@ def stream_research(query: str, use_ai: bool, dev_focus: bool,
     # ── STEP 2: Route through Vane (AI answer engine) ────────────────────────
     yield sse("step", {"text": "🧠 Asking Vane answer engine...", "phase": "generate"})
 
-    provider_id = detect_provider_id(llm_url)
-    vane_payload = {
-        "chatModel": {
-            "provider": provider_id,
-            "name":     llm_model
-        },
-        "embeddingModel": {
-            "provider": "transformers",
-            "name":     "all-MiniLM-L6-v2"
-        },
-        "focusMode":        "webSearch",
-        "optimizationMode": "balanced",
-        "query":            query,
-        "stream":           True
-    }
-
-    vane_headers = {"Content-Type": "application/json"}
-    if llm_key:
-        vane_headers["x-openai-api-key"] = llm_key
-
     vane_ok      = False
     full_summary = ""
     crawled_pages = []
 
     try:
+        # First fetch provider UUIDs from Vane
+        prov_r = requests.get(f"{HF_VANE_URL.rstrip('/')}/api/providers", timeout=10)
+        providers = prov_r.json().get("providers", []) if prov_r.status_code == 200 else []
+
+        # Find the OpenAI provider UUID and Transformers embedding UUID
+        chat_provider_id  = None
+        embed_provider_id = None
+        embed_model_key   = "Xenova/all-MiniLM-L6-v2"
+
+        for p in providers:
+            if p.get("name", "").lower() in ("openai", "openai-compatible", "custom_openai"):
+                chat_provider_id = p["id"]
+            if p.get("name", "").lower() == "transformers":
+                embed_provider_id = p["id"]
+                # pick first available embedding model
+                em = p.get("embeddingModels", [])
+                if em:
+                    embed_model_key = em[0]["key"]
+
+        if not chat_provider_id:
+            # fallback: use first provider that has chatModels
+            for p in providers:
+                if p.get("chatModels"):
+                    chat_provider_id = p["id"]
+                    break
+
+        if not embed_provider_id and providers:
+            embed_provider_id = providers[0]["id"]
+
+        if not chat_provider_id:
+            raise Exception("No chat provider found in Vane")
+
+        vane_payload = {
+            "chatModel": {
+                "providerId": chat_provider_id,
+                "key":        llm_model
+            },
+            "embeddingModel": {
+                "providerId": embed_provider_id or chat_provider_id,
+                "key":        embed_model_key
+            },
+            "sources":          ["web"],
+            "query":            query,
+            "optimizationMode": "balanced",
+            "stream":           True
+        }
+
+        vane_headers = {"Content-Type": "application/json"}
+
         vane_r = requests.post(
-            f"{HF_VANE_URL.rstrip('/')}/api/chat",
+            f"{HF_VANE_URL.rstrip('/')}/api/search",
             headers=vane_headers,
             json=vane_payload,
             stream=True,
@@ -152,29 +181,19 @@ def stream_research(query: str, use_ai: bool, dev_focus: bool,
                     continue
                 line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
 
-                # Vane streams JSON objects one per line
                 try:
                     obj = json.loads(line)
                 except Exception:
-                    # Try SSE data: prefix
-                    if line.startswith("data: "):
-                        try:
-                            obj = json.loads(line[6:])
-                        except Exception:
-                            continue
-                    else:
-                        continue
+                    continue
 
                 msg_type = obj.get("type", "")
 
                 if msg_type == "sources":
-                    # Vane sends sources mid-stream — update sources panel
                     vane_sources = obj.get("data", [])
                     for src in vane_sources:
-                        meta = src.get("metadata", {})
+                        meta  = src.get("metadata", {})
                         url   = meta.get("url", "")
                         title = meta.get("title", url)
-                        # crawl the source pages too
                         if url and is_crawlable(url):
                             try:
                                 domain = url.split("/")[2]
@@ -189,13 +208,13 @@ def stream_research(query: str, use_ai: bool, dev_focus: bool,
                             except Exception:
                                 pass
 
-                elif msg_type == "message":
+                elif msg_type == "response":
                     token = obj.get("data", "")
                     if token:
                         full_summary += token
                         yield sse("token", {"text": token})
 
-                elif msg_type == "messageEnd":
+                elif msg_type == "done":
                     break
 
         else:
