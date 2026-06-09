@@ -156,41 +156,50 @@ document.addEventListener('DOMContentLoaded', () => {
     // Display Results in split-screen format
     function displayResults(data, useAi) {
         hideElement(statusIndicator);
-        showElement(resultsSection);
-
-        // Display AI summary panel
+        
+        // Dynamically adjust grid layout for full-width search results when AI is off
         if (useAi) {
+            resultsSection.style.gridTemplateColumns = "1.6fr 1fr";
             showElement(aiSummaryCard);
             aiResponseContent.textContent = data.research_summary || "No research summary was returned.";
         } else {
-            // Hide AI Summary Card if AI is disabled
+            resultsSection.style.gridTemplateColumns = "1fr";
             hideElement(aiSummaryCard);
         }
+        
+        showElement(resultsSection);
 
-        // Render crawled sources
+        // Render search results like SearXNG
         sourcesList.innerHTML = '';
+        const searchResults = data.search_results || [];
         currentSources = data.crawled_pages || [];
 
-        if (currentSources.length === 0) {
-            sourcesList.innerHTML = '<p class="modal-desc">No web pages were successfully crawled for this query.</p>';
+        if (searchResults.length === 0) {
+            sourcesList.innerHTML = '<p class="modal-desc">No search results located for this query.</p>';
             return;
         }
 
-        currentSources.forEach((source, index) => {
+        searchResults.forEach((result) => {
             const item = document.createElement('div');
             item.className = 'source-item';
             
-            const titleText = source.title || `Source #${index + 1}`;
-            const displayTitle = titleText.length > 55 ? titleText.substring(0, 52) + '...' : titleText;
+            // Check if this URL was crawled
+            const crawlIndex = currentSources.findIndex(p => p.url === result.url);
+            const showCrawlBtn = crawlIndex !== -1;
 
             item.innerHTML = `
-                <div class="source-title">${displayTitle}</div>
-                <a href="${source.url}" target="_blank" class="source-link">${source.url}</a>
-                <div class="source-actions">
-                    <button class="action-btn view-crawl-btn" data-index="${index}">
+                <div class="source-title">
+                    <a href="${result.url}" target="_blank">${result.title}</a>
+                </div>
+                <div class="source-url-text">${result.url}</div>
+                <div class="source-snippet">${result.content || 'No snippet description available.'}</div>
+                ${showCrawlBtn ? `
+                <div class="source-actions" style="margin-top: 0.75rem;">
+                    <button class="action-btn view-crawl-btn" data-index="${crawlIndex}">
                         <i class="fa-solid fa-code"></i> View Crawl Markdown
                     </button>
                 </div>
+                ` : ''}
             `;
             sourcesList.appendChild(item);
         });

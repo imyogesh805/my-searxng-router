@@ -354,30 +354,39 @@ input:checked + .slider:before {
 
 .source-title {
     font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 0.25rem;
-    font-size: 0.95rem;
+    margin-bottom: 0.2rem;
+    font-size: 1.05rem;
 }
 
-.source-link {
+.source-title a {
     color: var(--accent-teal);
-    font-size: 0.8rem;
     text-decoration: none;
-    display: inline-block;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-bottom: 0.75rem;
+    transition: var(--transition);
 }
 
-.source-link:hover {
+.source-title a:hover {
     text-decoration: underline;
+    color: var(--accent-dark-teal);
+}
+
+.source-url-text {
+    color: rgba(197, 198, 199, 0.45);
+    font-size: 0.76rem;
+    margin-bottom: 0.4rem;
+    word-break: break-all;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.source-snippet {
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+    line-height: 1.5;
+    margin-bottom: 0.5rem;
 }
 
 .source-actions {
     display: flex;
-    justify-content: flex-end;
+    justify-content: flex-start;
 }
 
 .action-btn {

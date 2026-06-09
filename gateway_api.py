@@ -75,8 +75,18 @@ def perform_research(request_data: ResearchRequest):
             "status": "success",
             "query": query,
             "research_summary": "Zero web targets located. Cannot synthesize summary.",
+            "search_results": [],
             "crawled_pages": []
         }
+        
+    # Extract search results details (titles, urls, snippets) to return to UI
+    search_results = []
+    for item in results:
+        search_results.append({
+            "title": item.get("title", "Untitled Source"),
+            "url": item.get("url", ""),
+            "content": item.get("content", "")
+        })
         
     # 2. Grab top 2 URLs and Crawl them
     crawled_pages = []
@@ -168,6 +178,7 @@ def perform_research(request_data: ResearchRequest):
         "status": "success",
         "query": query,
         "research_summary": research_summary,
+        "search_results": search_results,
         "crawled_pages": crawled_pages
     }
 
